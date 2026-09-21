@@ -25,6 +25,71 @@ const rboolean =
 const rbrace = /^{[^]*}$|^\[[^]*]$/;
 
 /**
+ * DOM properties that reflect an attribute under a different name. Maps every
+ * accepted spelling (both the DOM property name and the attribute name) to the
+ * canonical, lowercase HTML attribute name.
+ *
+ * HTML parsing lowercases attribute names, so author-written camelCase keys
+ * such as `className` can end up as ghost keys (`classname`) that coexist with
+ * the real attribute (`class`). All family members are recognized
+ * case-insensitively when reading and when cleaning up.
+ */
+const propReflectsAttr: Record<string, string> = {
+  className: 'class',
+  class: 'class',
+  tabIndex: 'tabindex',
+  tabindex: 'tabindex',
+  htmlFor: 'for',
+  for: 'for',
+};
+
+/**
+ * Lowercase spellings belonging to a reflection family. This includes the
+ * lowercased camelCase name so parser-generated ghost keys (e.g. `classname`
+ * from author-written `className`) are recognized as family members.
+ */
+const reflectedAttrByLowerCase: Record<string, string> = Object.fromEntries(
+  Object.entries(propReflectsAttr).map(([name, attrName]) => [
+    name.toLowerCase(),
+    attrName,
+  ]),
+);
+
+/**
+ * Resolves a prop name to the HTML attribute it reflects, if any. The lookup is
+ * case-sensitive first (matching the DOM property names), then case-insensitive
+ * (matching attribute spellings).
+ *
+ * @private
+ * @param name - Name of the property.
+ * @returns The canonical attribute name, or `undefined` if the property does
+ *   not reflect an aliased attribute.
+ */
+function getReflectedAttrName(name: string): string | undefined {
+  return propReflectsAttr[name] ?? reflectedAttrByLowerCase[name.toLowerCase()];
+}
+
+/**
+ * Removes every attribute spelling belonging to the reflection family of
+ * `attrName`. Attribute keys are matched by family membership (case-insensitive
+ * against every accepted spelling), which also catches parser-generated ghost
+ * keys such as `classname` or `htmlfor`.
+ *
+ * @private
+ * @param el - The element whose attributes are cleaned.
+ * @param attrName - Canonical attribute name of the family.
+ */
+function removeReflectedAttrFamily(el: Element, attrName: string) {
+  if (!el.attribs) return;
+
+  for (const key of Object.keys(el.attribs)) {
+    if (reflectedAttrByLowerCase[key.toLowerCase()] === attrName) {
+      delete el.attribs[key];
+    }
+  }
+}
+
+/**
  * Gets a node's attribute. For boolean attributes, it will return the value's
  * name should it be set.
  *
@@ -239,6 +304,12 @@ function getProp(
   name: string,
   xmlMode?: boolean,
 ): string | undefined | boolean | Element[keyof Element] {
+  // DOM reflection aliases such as `className`, `tabIndex`, and `htmlFor` read
+  // from the real HTML attribute (`class`, `tabindex`, `for`).
+  const reflectedAttr = !xmlMode ? getReflectedAttrName(name) : undefined;
+  if (reflectedAttr !== undefined) {
+    return getAttr(el, reflectedAttr, false);
+  }
   return name in el
     ? // @ts-expect-error TS doesn't like us accessing the value directly here.
       (el[name] as string | undefined)
@@ -257,6 +328,15 @@ function getProp(
  * @param xmlMode - Disable handling of special HTML attributes.
  */
 function setProp(el: Element, name: string, value: unknown, xmlMode?: boolean) {
+  // Reflected aliases always land on the real attribute. Remove any other
+  // spelling of the same family (including parser-generated ghost keys) first,
+  // regardless of casing. XML documents opt out of this normalization.
+  const reflectedAttr = !xmlMode ? getReflectedAttrName(name) : undefined;
+  if (reflectedAttr !== undefined) {
+    removeReflectedAttrFamily(el, reflectedAttr);
+    setAttr(el, reflectedAttr, `${value as string}`);
+    return;
+  }
   if (name in el) {
     // @ts-expect-error Overriding value
     el[name] = value;
@@ -318,6 +398,36 @@ export function prop<T extends AnyNode>(
   this: Cheerio<T>,
   name: 'style',
 ): StyleProp | undefined;
+/**
+ * Get an HTML attribute via its DOM property reflection name (`className`,
+ * `tabIndex`, or `htmlFor`). The value is read from the real attribute
+ * (`class`, `tabindex`, or `for`).
+ *
+ * @param name - Name of the property.
+ * @returns The attribute's value.
+ */
+export function prop<T extends AnyNode>(
+  this: Cheerio<T>,
+  name: 'className' | 'tabIndex' | 'htmlFor',
+): string | undefined;
+/**
+ * Set an HTML attribute via its DOM property reflection name (`className`,
+ * `tabIndex`, or `htmlFor`). Any other spelling of the same attribute family is
+ * removed, and only the real attribute (`class`, `tabindex`, or `for`) is
+ * written.
+ *
+ * @param name - Name of the property.
+ * @param value - Value to set the property to.
+ * @returns The instance itself.
+ */
+export function prop<T extends AnyNode>(
+  this: Cheerio<T>,
+  name: 'className' | 'tabIndex' | 'htmlFor',
+  value:
+    | string
+    | number
+    | ((this: Element, i: number, prop: string) => string | number),
+): Cheerio<T>;
 /**
  * Resolve `href` or `src` of supported elements. Requires the `baseURI` option
  * to be set, and a global `URL` object to be part of the environment.

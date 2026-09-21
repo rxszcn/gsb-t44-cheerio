@@ -441,6 +441,101 @@ describe('$(...)', () => {
       expect($xml.prop('checked')).toBe('checked');
       expect($xml.prop('disabled')).toBe('yes');
     });
+
+    it('(reflection) : reads camelCase DOM names from real attributes', () => {
+      const $ref = load('<div id=r class="a b" for="x" tabindex="3"></div>')(
+        '#r',
+      );
+
+      expect($ref.prop('class')).toBe('a b');
+      expect($ref.prop('className')).toBe('a b');
+      expect($ref.prop('tabindex')).toBe('3');
+      expect($ref.prop('tabIndex')).toBe('3');
+      expect($ref.prop('for')).toBe('x');
+      expect($ref.prop('htmlFor')).toBe('x');
+    });
+
+    it('(reflection) : writes land on the real attribute only', () => {
+      const $ref = load('<div id=r class="a b" for="x" tabindex="3"></div>')(
+        '#r',
+      );
+
+      $ref.prop('tabIndex', 7);
+      expect($ref.attr('tabindex')).toBe('7');
+      expect($ref.attr('tabIndex')).toBeUndefined();
+
+      $ref.prop('className', 'c');
+      expect($ref.attr('class')).toBe('c');
+      expect($ref.attr('className')).toBeUndefined();
+
+      $ref.prop('htmlFor', 'y');
+      expect($ref.attr('for')).toBe('y');
+      expect($ref.attr('htmlFor')).toBeUndefined();
+
+      expect($ref.attr()).toMatchObject({
+        id: 'r',
+        class: 'c',
+        for: 'y',
+        tabindex: '7',
+      });
+    });
+
+    it('(reflection) : prefers the real attribute over ghost mirrors', () => {
+      const $ghost = load(
+        '<p id=g class="a" className="b" tabindex="1" tabIndex="2" for="x" htmlFor="y">g</p>',
+      )('#g');
+
+      expect($ghost.prop('class')).toBe('a');
+      expect($ghost.prop('className')).toBe('a');
+      expect($ghost.prop('tabindex')).toBe('1');
+      expect($ghost.prop('tabIndex')).toBe('1');
+      expect($ghost.prop('for')).toBe('x');
+      expect($ghost.prop('htmlFor')).toBe('x');
+    });
+
+    it('(reflection) : clears every family spelling before writing', () => {
+      const $writeCamel = load(
+        '<p id=g class="a" className="b" htmlFor="y" tabIndex="2">g</p>',
+      )('#g');
+      $writeCamel.prop('className', 'c');
+      expect($writeCamel.attr()).toMatchObject({
+        id: 'g',
+        class: 'c',
+        htmlfor: 'y',
+      });
+
+      const $writeLower = load(
+        '<p id=g class="a" className="b" for="x" tabIndex="2">g</p>',
+      )('#g');
+      $writeLower.prop('class', 'd');
+      expect($writeLower.attr()).toMatchObject({
+        id: 'g',
+        class: 'd',
+        for: 'x',
+      });
+
+      $writeCamel.prop('tabIndex', 9);
+      $writeCamel.prop('htmlFor', 'z');
+      expect($writeCamel.attr()).toMatchObject({
+        id: 'g',
+        class: 'c',
+        for: 'z',
+        tabindex: '9',
+      });
+    });
+
+    it('(reflection) : does not normalize in XML mode', () => {
+      const $xmlLoad = load('<p className="k" tabIndex="1">x</p>', {
+        xml: true,
+      });
+      const $xml = $xmlLoad('p');
+
+      expect($xml.prop('className')).toBe('k');
+      expect($xml.prop('className', 'm')).toBe($xml);
+      expect($xml.attr('className')).toBe('m');
+      expect($xml.attr('classname')).toBeUndefined();
+      expect($xmlLoad.html()).toBe('<p className="m" tabIndex="1">x</p>');
+    });
   });
 
   describe('.data', () => {
