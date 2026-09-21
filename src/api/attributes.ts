@@ -24,6 +24,29 @@ const rboolean =
 // Matches strings that look like JSON objects or arrays
 const rbrace = /^{[^]*}$|^\[[^]*]$/;
 
+// DOM properties that reflect onto an HTML attribute with a different
+// spelling. The first entry of each family is the canonical HTML attribute
+// name; the remaining entries are DOM-property aliases (e.g. `className` for
+// `class`). In HTML mode reads and writes of any family spelling resolve to
+// the canonical attribute, and mirror keys left behind by authors or
+// parsers (which turn unknown attributes such as `className` into the
+// all-lowercase ghost key `classname`) are treated as leftovers and never
+// surfaced on read. XML mode is intentionally excluded from this mapping.
+const domReflectionFamilies: ReadonlyArray<readonly [string, ...string[]]> = [
+  ['class', 'className'],
+  ['for', 'htmlFor'],
+  ['tabindex', 'tabIndex'],
+];
+
+// Lower-cased spelling (both canonical names and aliases) to canonical name.
+const reflectedAttributeByProp = new Map<string, string>();
+for (const [canonical, ...aliases] of domReflectionFamilies) {
+  reflectedAttributeByProp.set(canonical.toLowerCase(), canonical);
+  for (const alias of aliases) {
+    reflectedAttributeByProp.set(alias.toLowerCase(), canonical);
+  }
+}
+
 /**
  * Gets a node's attribute. For boolean attributes, it will return the value's
  * name should it be set.
@@ -239,12 +262,26 @@ function getProp(
   name: string,
   xmlMode?: boolean,
 ): string | undefined | boolean | Element[keyof Element] {
-  return name in el
-    ? // @ts-expect-error TS doesn't like us accessing the value directly here.
-      (el[name] as string | undefined)
-    : !xmlMode && rboolean.test(name)
-      ? getAttr(el, name, false) !== undefined
-      : getAttr(el, name, xmlMode);
+  if (name in el) {
+    // @ts-expect-error TS doesn't like us accessing the value directly here.
+    return el[name] as string | undefined;
+  }
+
+  if (!xmlMode) {
+    const reflectedName = reflectedAttributeByProp.get(name.toLowerCase());
+
+    if (reflectedName !== undefined) {
+      // Only the canonical attribute is authoritative; mirror keys never
+      // surface as the property's value.
+      return getAttr(el, reflectedName, false);
+    }
+
+    if (rboolean.test(name)) {
+      return getAttr(el, name, false) !== undefined;
+    }
+  }
+
+  return getAttr(el, name, xmlMode);
 }
 
 /**
@@ -260,16 +297,54 @@ function setProp(el: Element, name: string, value: unknown, xmlMode?: boolean) {
   if (name in el) {
     // @ts-expect-error Overriding value
     el[name] = value;
-  } else {
-    setAttr(
-      el,
-      name,
-      !xmlMode && rboolean.test(name)
-        ? value
-          ? ''
-          : null
-        : `${value as string}`,
-    );
+    return;
+  }
+
+  if (!xmlMode) {
+    const reflectedName = reflectedAttributeByProp.get(name.toLowerCase());
+
+    if (reflectedName !== undefined) {
+      setReflectedAttr(el, reflectedName, value);
+      return;
+    }
+  }
+
+  setAttr(
+    el,
+    name,
+    !xmlMode && rboolean.test(name)
+      ? value
+        ? ''
+        : null
+      : `${value as string}`,
+  );
+}
+
+/**
+ * Sets a DOM reflected property (such as `className`, `htmlFor`, or `tabIndex`)
+ * on its canonical HTML attribute. Removes every spelling of the same
+ * reflection family (case-insensitive, covering ghost keys parsers create for
+ * unknown attributes) before writing the canonical attribute so no non-standard
+ * camel-cased attribute can linger in the document.
+ *
+ * A value of `null` removes the attribute (and all family mirrors).
+ *
+ * @private
+ * @param el - The element to set the reflected attribute on.
+ * @param canonical - The canonical HTML attribute name.
+ * @param value - The attribute's value.
+ */
+function setReflectedAttr(el: Element, canonical: string, value: unknown) {
+  el.attribs ??= {};
+
+  for (const attrName of Object.keys(el.attribs)) {
+    if (reflectedAttributeByProp.get(attrName.toLowerCase()) === canonical) {
+      delete el.attribs[attrName];
+    }
+  }
+
+  if (value !== null) {
+    el.attribs[canonical] = `${value as string}`;
   }
 }
 

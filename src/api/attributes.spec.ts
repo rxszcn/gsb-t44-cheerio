@@ -441,6 +441,100 @@ describe('$(...)', () => {
       expect($xml.prop('checked')).toBe('checked');
       expect($xml.prop('disabled')).toBe('yes');
     });
+
+    it('(DOM reflection) : reads camel-cased aliases from real attributes', () => {
+      const $reflected = $('<label class="a b" for="x" tabindex="3">z</label>');
+
+      expect($reflected.prop('class')).toBe('a b');
+      expect($reflected.prop('className')).toBe('a b');
+      expect($reflected.prop('tabindex')).toBe('3');
+      expect($reflected.prop('tabIndex')).toBe('3');
+      expect($reflected.prop('for')).toBe('x');
+      expect($reflected.prop('htmlFor')).toBe('x');
+    });
+
+    it('(DOM reflection) : writes aliases to the canonical attribute only', () => {
+      const $reflected = $(
+        '<div class="a b" for="x" tabindex="3">z</div>',
+      ) as Cheerio<Element>;
+
+      $reflected.prop('tabIndex', 7 as unknown as string);
+      $reflected.prop('className', 'c');
+      $reflected.prop('htmlFor', 'y');
+
+      const attrs = $reflected.attr();
+      expect(attrs).toEqual({
+        class: 'c',
+        for: 'y',
+        tabindex: '7',
+      });
+      expect($reflected.prop('className')).toBe('c');
+      expect($reflected.prop('htmlFor')).toBe('y');
+      expect($reflected.prop('tabIndex')).toBe('7');
+      expect($reflected.prop('outerHTML')).toBe(
+        '<div tabindex="7" class="c" for="y">z</div>',
+      );
+    });
+
+    it('(DOM reflection) : writes canonical names and removes mirrors', () => {
+      const $reflected = $(
+        '<div class="a" className="b">z</div>',
+      ) as Cheerio<Element>;
+
+      $reflected.prop('class', 'd');
+
+      expect($reflected.attr()).toEqual({ class: 'd' });
+    });
+
+    it('(DOM reflection) : real attribute wins over mirror keys on read', () => {
+      const $reflected = $('<p class="a" className="b" classname="c">m</p>');
+
+      expect($reflected.prop('class')).toBe('a');
+      expect($reflected.prop('className')).toBe('a');
+    });
+
+    it('(DOM reflection) : mirror-only elements read as undefined', () => {
+      const $reflected = $('<p className="b" htmlFor="y">m</p>');
+
+      expect($reflected.prop('class')).toBeUndefined();
+      expect($reflected.prop('className')).toBeUndefined();
+      expect($reflected.prop('htmlFor')).toBeUndefined();
+    });
+
+    it('(DOM reflection) : writing an alias cleans up all family spellings', () => {
+      const $reflected = $(
+        '<p for="a" htmlFor="b" htmlfor="c">m</p>',
+      ) as Cheerio<Element>;
+
+      $reflected.prop('htmlFor', 'y');
+
+      expect($reflected.attr()).toEqual({
+        for: 'y',
+      });
+      expect(Object.keys($reflected.attr()!)).not.toContain('htmlfor');
+    });
+
+    it('(DOM reflection) : null removes the canonical attribute and mirrors', () => {
+      const $reflected = $(
+        '<p class="a" className="b">m</p>',
+      ) as Cheerio<Element>;
+
+      $reflected.prop('className', null);
+
+      expect($reflected.attr()).toEqual({});
+    });
+
+    it('(DOM reflection) : passes aliases through unchanged in XML mode', () => {
+      const $xml = $.load('<p className="k" for="x">x</p>', {
+        xml: true,
+      });
+
+      $xml('p').prop('className', 'm');
+
+      expect($xml.html()).toBe('<p className="m" for="x">x</p>');
+      expect($xml('p').prop('class')).toBeUndefined();
+      expect($xml('p').prop('for')).toBe('x');
+    });
   });
 
   describe('.data', () => {
